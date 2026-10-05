@@ -1,0 +1,4 @@
+skyfield
+plotly
+numpy
+certifi
