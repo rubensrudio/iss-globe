@@ -113,3 +113,9 @@ iss-globe/
 ├── iss.tle             # cached TLE (generated at runtime)
 └── iss_globe.html      # generated globe (generated at runtime)
 ```
+
+## License
+
+Licensed under the **MIT License** — see [`LICENSE`](LICENSE).
+
+Copyright © 2026 Rubens Rudio.
