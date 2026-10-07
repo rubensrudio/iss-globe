@@ -77,6 +77,15 @@ Saved /path/to/iss-globe/iss_globe.html
 
 *(Values above are illustrative.)* As a quick sanity check, the ISS altitude should be roughly 415-425 km and its latitude must always stay within ±51.6°, which is the orbital inclination.
 
+## Running tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The tests run fully offline against the embedded TLE and also run in CI on every push and pull request.
+
 ## How it works
 
 1. **Timescale**: `load.timescale()` provides the time scales Skyfield needs (UTC, TT, UT1).
@@ -109,6 +118,8 @@ The script always writes the HTML file (`--out`). Open it manually in any browse
 iss-globe/
 ├── iss_globe.py        # main script
 ├── requirements.txt
+├── requirements-dev.txt  # adds pytest
+├── tests/              # offline test suite
 ├── README.md
 ├── iss.tle             # cached TLE (generated at runtime)
 └── iss_globe.html      # generated globe (generated at runtime)
