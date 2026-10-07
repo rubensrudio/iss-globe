@@ -1,0 +1,9 @@
+# Generated at runtime
+iss.tle
+iss_globe.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
