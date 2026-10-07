@@ -75,7 +75,7 @@ Subpoint  : lat=-23.1042°  lon=-46.5530°  alt=421.8 km
 Saved /path/to/iss-globe/iss_globe.html
 ```
 
-*(Values above are illustrative.)* As a quick sanity check, the ISS altitude should be roughly 415-425 km and its latitude must always stay within ±51.6°, which is the orbital inclination.
+*(Values above are illustrative.)* As a quick sanity check, the ISS altitude should be roughly 415-425 km and its latitude must always stay within ±51.8°, which is the orbital inclination.
 
 ## Running tests
 
