@@ -1,6 +1,7 @@
 # Generated at runtime
 iss.tle
 iss_globe.html
+triangulate_*.html
 
 # Python
 __pycache__/
