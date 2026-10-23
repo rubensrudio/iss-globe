@@ -73,6 +73,15 @@ def build_figure(lat, lon, alt, when, track_lat, track_lon, sat_name):
         name=f"{sat_name}",
         hovertemplate=f"lat {lat:.3f}°<br>lon {lon:.3f}°<br>alt {alt:.1f} km<extra></extra>",
     ))
+    style_globe(fig, lat, lon)
+    fig.update_layout(
+        title=f"{sat_name} — {when:%Y-%m-%d %H:%M:%S} UTC | "
+              f"lat {lat:.2f}°, lon {lon:.2f}°, alt {alt:.0f} km",
+    )
+    return fig
+
+
+def style_globe(fig, lat, lon):
     fig.update_geos(
         projection_type="orthographic",
         projection_rotation=dict(lon=lon, lat=lat),
@@ -82,12 +91,7 @@ def build_figure(lat, lon, alt, when, track_lat, track_lon, sat_name):
         showcoastlines=True, coastlinecolor="#cde",
         lataxis_showgrid=True, lonaxis_showgrid=True,
     )
-    fig.update_layout(
-        title=f"{sat_name} — {when:%Y-%m-%d %H:%M:%S} UTC | "
-              f"lat {lat:.2f}°, lon {lon:.2f}°, alt {alt:.0f} km",
-        template="plotly_dark", height=700, margin=dict(l=0, r=0, t=60, b=0),
-    )
-    return fig
+    fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=60, b=0))
 
 
 def parse_ts(s: str | None) -> datetime:
@@ -95,6 +99,18 @@ def parse_ts(s: str | None) -> datetime:
         return datetime.now(timezone.utc)
     dt = datetime.fromisoformat(s)
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def check_epoch(sat: EarthSatellite, t) -> float:
+    """Return days between t and the TLE epoch; exit if SGP4 would be meaningless."""
+    days_from_epoch = t - sat.epoch
+    if abs(days_from_epoch) > 30:
+        raise SystemExit(
+            f"TLE epoch is {days_from_epoch:+.0f} days from the requested time: SGP4 result "
+            "would be meaningless (the orbit decays/drifts). Fix the download, or use "
+            "--timestamp near the TLE epoch."
+        )
+    return days_from_epoch
 
 
 def main():
@@ -109,13 +125,7 @@ def main():
     when = parse_ts(args.timestamp)
     t = ts.from_datetime(when)
 
-    days_from_epoch = t - sat.epoch
-    if abs(days_from_epoch) > 30:
-        raise SystemExit(
-            f"TLE epoch is {days_from_epoch:+.0f} days from the requested time: SGP4 result "
-            "would be meaningless (the orbit decays/drifts). Fix the download, or use "
-            "--timestamp near the TLE epoch."
-        )
+    days_from_epoch = check_epoch(sat, t)
     lat, lon, alt = subpoint_at(sat, t)
     print(f"TLE epoch : {sat.epoch.utc_iso()}  ({days_from_epoch:+.2f} days from requested time)")
     print(f"Time      : {when.isoformat()}")

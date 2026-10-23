@@ -94,6 +94,28 @@ The tests run fully offline against the embedded TLE and also run in CI on every
 4. **Subpoint**: `wgs84.subpoint(geocentric)` accounts for Earth's rotation and projects the position onto the WGS84 ellipsoid, returning latitude, longitude and elevation.
 5. **Plot**: Plotly's `Scattergeo` with an orthographic projection draws the globe, centered on the ISS, plus the ground track.
 
+## Triangulation study
+
+`triangulate.py` explores satellite triangulation in both directions, with **simulated, seeded measurements** compared against the SGP4 truth. Everything runs offline.
+
+```bash
+# A receiver in São Paulo locates itself from GPS pseudoranges
+python triangulate.py gnss --lat -23.55 --lon -46.63 --timestamp 2026-10-23T12:00:00 --sigma-m 3
+
+# Four ground stations locate the ISS by ranges and by angles
+python triangulate.py stations --offline --timestamp 2014-01-20T23:00:00 --method both
+```
+
+Each run prints the truth, the estimate, the error in meters, the residuals, and the DOP values for GNSS. It also writes a globe with the known points, the lines of sight and the true and estimated positions (`--out`; use `--no-show` to skip opening it). `--seed`, `--mask-deg` and the noise levels are configurable; see `python triangulate.py gnss --help`.
+
+**GNSS (receiver from satellites).** Each pseudorange is `ρᵢ = ‖rᵢ − p‖ + b + noise`, where `b = c·Δt` is the receiver clock bias expressed as a distance. That gives four unknowns `(x, y, z, b)`, so at least 4 satellites are needed. The system is solved by Gauss-Newton: linearize `J·Δx = −r`, update, repeat. The geometry matrix `G = [−uᵢ (ENU) | 1]` gives `Q = (GᵀG)⁻¹`, and from it `GDOP`, `PDOP`, `HDOP`, `VDOP` and `TDOP`. As a rule of thumb, position error ≈ σ × PDOP.
+
+**Stations (ISS from the ground).** Stations are placed on a ring around the ISS subpoint (`--n`, `--radius-km`).
+- *Ranges* (multilateration): solve `‖p − sᵢ‖ = rᵢ` for `p` by Gauss-Newton, starting above the stations so that, with only 3 stations, it avoids the mirror solution below their plane.
+- *Angles* (lines of sight): each azimuth/elevation defines a line `sᵢ + k·uᵢ`. The point closest to all lines has the closed form `Σ(I − uᵢuᵢᵀ)·p = Σ(I − uᵢuᵢᵀ)·sᵢ`. Angular noise scales with distance (0.01° at ~1,150 km is ~200 m), so angles are much less precise than ranges.
+
+**Simplifications.** No light-time correction, no Sagnac effect (Earth rotation during signal flight), and no ionosphere or troposphere. The GPS constellation is synthetic: 24 satellites in 6 planes, 55° inclination, ~20,200 km altitude, built directly as SGP4 elements. It is not a real almanac, so fewer satellites are visible than with the real ~31.
+
 ## Accuracy notes
 
 - A TLE is only valid near its **epoch**. For low Earth orbit objects such as the ISS, SGP4 error typically grows by roughly 1-3 km per day away from the epoch.
@@ -117,12 +139,15 @@ The script always writes the HTML file (`--out`). Open it manually in any browse
 ```
 iss-globe/
 ├── iss_globe.py        # main script
+├── triangulate.py      # triangulation study CLI (gnss / stations)
+├── triangulation/      # core (frames, Gauss-Newton), gnss, stations, plot
 ├── requirements.txt
 ├── requirements-dev.txt  # adds pytest
 ├── tests/              # offline test suite
 ├── README.md
 ├── iss.tle             # cached TLE (generated at runtime)
-└── iss_globe.html      # generated globe (generated at runtime)
+├── iss_globe.html      # generated globe (generated at runtime)
+└── triangulate_*.html  # generated triangulation globes (generated at runtime)
 ```
 
 ## License
