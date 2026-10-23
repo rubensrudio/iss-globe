@@ -6,7 +6,7 @@ from skyfield.api import load, wgs84
 
 import iss_globe
 import triangulate
-from triangulation import gnss, stations
+from triangulation import gnss, microseismic, stations
 from triangulation.core import ecef_to_geodetic, gauss_newton, itrs_km
 
 NOW = datetime(2026, 10, 23, 12, 0, 0, tzinfo=timezone.utc)
@@ -158,3 +158,78 @@ def test_cli_stations_writes_html(tmp_path):
     triangulate.main(["stations", "--offline", "--timestamp", NEAR_EPOCH.isoformat(),
                       "--no-show", "--out", str(out)])
     assert out.stat().st_size > 0
+
+
+EVENT = np.array([0.3, -0.2, -2.5])
+V_KM_S = 4.5
+T0_S = 0.25
+
+
+def micro_layouts():
+    surface = microseismic.surface_array()
+    return {
+        "surface": surface,
+        "downhole": microseismic.downhole_array(),
+        "combined": np.vstack([surface, microseismic.downhole_array(wells=microseismic.DEFAULT_WELLS[:1])]),
+    }
+
+
+def locate(geo, sigma_ms=0.0, v_assumed=V_KM_S, seed=42):
+    arrivals = microseismic.simulate_arrivals(geo, EVENT, T0_S, V_KM_S, sigma_ms, np.random.default_rng(seed))
+    p, t0, _, _ = microseismic.locate_event(geo, arrivals, v_assumed)
+    return p, t0
+
+
+@pytest.mark.parametrize("layout", ["surface", "downhole", "combined"])
+def test_microseismic_noise_free_recovers_event(layout):
+    p, t0 = locate(micro_layouts()[layout])
+    assert np.linalg.norm(p - EVENT) * 1000 < 1.0
+    assert abs(t0 - T0_S) < 1e-6
+    assert p[2] < 0
+
+
+def test_surface_array_resolves_depth_worse_than_horizontal():
+    layouts = micro_layouts()
+    surface = microseismic.event_dop(layouts["surface"], EVENT)
+    combined = microseismic.event_dop(layouts["combined"], EVENT)
+    assert surface["VDOP"] > surface["HDOP"]
+    assert combined["VDOP"] < surface["VDOP"]
+
+
+def test_single_vertical_well_cannot_resolve_azimuth():
+    geo = microseismic.downhole_array(wells=microseismic.DEFAULT_WELLS[:1])
+    with pytest.raises(ValueError, match="degenerate"):
+        locate(geo)
+
+
+def test_two_wells_are_mirror_ambiguous_three_are_not():
+    two = microseismic.downhole_array(wells=microseismic.DEFAULT_WELLS[:2])
+    assert microseismic.mirror_ambiguous(two)
+    assert not microseismic.mirror_ambiguous(microseismic.downhole_array())
+    assert not microseismic.mirror_ambiguous(microseismic.surface_array())
+
+
+def test_wrong_velocity_biases_the_location():
+    p, _ = locate(micro_layouts()["surface"], v_assumed=4.4)
+    assert np.linalg.norm(p - EVENT) * 1000 > 10
+
+
+@pytest.mark.parametrize("layout", ["surface", "downhole", "combined"])
+def test_microseismic_noisy_error_is_bounded_by_dop(layout):
+    geo = micro_layouts()[layout]
+    sigma_ms = 1.0
+    p, _ = locate(geo, sigma_ms=sigma_ms)
+    pdop = microseismic.event_dop(geo, EVENT)["PDOP"]
+    sigma_range_m = V_KM_S * sigma_ms  # km/s * ms = m
+    assert np.linalg.norm(p - EVENT) * 1000 < 4 * sigma_range_m * pdop
+
+
+def test_cli_microseismic_writes_html(tmp_path):
+    out = tmp_path / "micro.html"
+    triangulate.main(["microseismic", "--no-show", "--out", str(out)])
+    assert out.stat().st_size > 0
+
+
+def test_cli_microseismic_reports_degenerate_single_well(tmp_path, capsys):
+    triangulate.main(["microseismic", "--wells", "1", "--no-show", "--out", str(tmp_path / "m.html")])
+    assert "degenerate geometry" in capsys.readouterr().out

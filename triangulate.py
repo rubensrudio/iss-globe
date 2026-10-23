@@ -5,9 +5,9 @@ import numpy as np
 from skyfield.api import load, wgs84
 
 from iss_globe import check_epoch, load_iss, parse_ts
-from triangulation import gnss, stations
+from triangulation import gnss, microseismic, stations
 from triangulation.core import C_KM_S, ecef_to_geodetic, itrs_km, make_fix
-from triangulation.plot import build_triangulation_figure
+from triangulation.plot import build_microseismic_figure, build_triangulation_figure
 
 
 def print_fix(label, fix):
@@ -80,6 +80,59 @@ def run_stations(args, ts):
     return build_triangulation_figure(title, anchors, (sat.name, lat, lon, alt), estimates)
 
 
+MICRO_T0_S = 0.25  # arbitrary origin time of the simulated event
+
+
+def run_microseismic(args):
+    v_true = args.v_km_s
+    v_used = args.v_assumed_km_s or v_true
+    event = np.array([args.event_x_km, args.event_y_km, -args.depth_km])
+    groups = {"Surface": microseismic.surface_array()}
+    for k, well in enumerate(microseismic.DEFAULT_WELLS[:args.wells], start=1):
+        groups[f"Well {k}"] = microseismic.downhole_array(wells=[well])
+    layouts = {
+        "surface": ["Surface"],
+        "downhole": [g for g in groups if g.startswith("Well")],
+        "combined": ["Surface", "Well 1"],
+    }
+    chosen = list(layouts) if args.array == "compare" else [args.array]
+
+    print(f"Event     : x={event[0]:.3f} km  y={event[1]:.3f} km  depth={args.depth_km:.3f} km  t0={MICRO_T0_S:.3f} s")
+    print(f"Velocity  : true {v_true:g} km/s, assumed {v_used:g} km/s | picking noise σ={args.sigma_ms:g} ms")
+    print(f"{'layout':<10}{'geophones':>10}{'horiz m':>10}{'Δdepth m':>10}{'Δt0 ms':>9}"
+          f"{'HDOP':>7}{'VDOP':>7}{'rms ms':>8}")
+
+    estimates, mirrored = [], []
+    for name in chosen:
+        geo = np.vstack([groups[g] for g in layouts[name]])
+        arrivals = microseismic.simulate_arrivals(geo, event, MICRO_T0_S, v_true, args.sigma_ms,
+                                                  np.random.default_rng(args.seed))
+        try:
+            p, t0, res_s, _ = microseismic.locate_event(geo, arrivals, v_used)
+        except ValueError:
+            print(f"{name:<10}{len(geo):>10}   degenerate geometry (azimuth undetermined)")
+            continue
+        d = microseismic.event_dop(geo, event)
+        err = p - event
+        flag = "  (mirror?)" if microseismic.mirror_ambiguous(geo) else ""
+        print(f"{name:<10}{len(geo):>10}{np.hypot(*err[:2]) * 1000:>10.1f}{-err[2] * 1000:>10.1f}"
+              f"{(t0 - MICRO_T0_S) * 1000:>9.2f}{d['HDOP']:>7.2f}{d['VDOP']:>7.2f}"
+              f"{np.sqrt(np.mean(res_s ** 2)) * 1000:>8.2f}{flag}")
+        if flag:
+            mirrored.append(name)
+        estimates.append((name, p, float(np.linalg.norm(err) * 1000)))
+    print("Δdepth > 0 means the estimate is deeper than the event. "
+          "Expected position error ≈ v·σ·PDOP.")
+    if mirrored:
+        print(f"[warn] {', '.join(mirrored)}: all geophones lie in one vertical plane, so the event's "
+              "mirror image across it fits equally well. Add a well or surface geophones.")
+
+    used = list(dict.fromkeys(g for name in chosen for g in layouts[name]))
+    title = (f"Microseismic event at {args.depth_km:g} km — v {v_true:g} km/s (assumed {v_used:g}), "
+             f"σ {args.sigma_ms:g} ms | " + " | ".join(f"{e[0]}: {e[2]:.1f} m" for e in estimates))
+    return build_microseismic_figure(title, [(g, groups[g]) for g in used], event, estimates)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Satellite triangulation study (simulated measurements)")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -101,15 +154,31 @@ def main(argv=None):
     s.add_argument("--sigma-angle-deg", type=float, default=0.01, help="azimuth/elevation noise (1 sigma), deg")
     s.add_argument("--out", default="triangulate_stations.html")
 
+    m = sub.add_parser("microseismic", help="locate a microseismic event from geophone arrival times")
+    m.add_argument("--array", choices=["surface", "downhole", "combined", "compare"], default="compare",
+                   help="geophone layout; compare solves all three")
+    m.add_argument("--wells", type=int, choices=[1, 2, 3], default=3, help="monitoring wells in the downhole array")
+    m.add_argument("--event-x-km", type=float, default=0.3, help="event East coordinate, km")
+    m.add_argument("--event-y-km", type=float, default=-0.2, help="event North coordinate, km")
+    m.add_argument("--depth-km", type=float, default=2.5, help="event depth, km")
+    m.add_argument("--v-km-s", type=float, default=4.5, help="true P-wave velocity, km/s")
+    m.add_argument("--v-assumed-km-s", type=float, help="velocity used to locate (default: the true one)")
+    m.add_argument("--sigma-ms", type=float, default=1.0, help="arrival-time picking noise (1 sigma), ms")
+    m.add_argument("--out", default="triangulate_microseismic.html")
+
     for p in (g, s):
         p.add_argument("--timestamp", help="ISO 8601, assumed UTC if no tz (e.g. 2026-10-05T18:30:00)")
         p.add_argument("--mask-deg", type=float, default=10.0, help="elevation mask, deg")
+    for p in (g, s, m):
         p.add_argument("--seed", type=int, default=42, help="random seed for the simulated noise")
         p.add_argument("--no-show", action="store_true", help="only write the HTML, do not open it")
     args = ap.parse_args(argv)
 
-    ts = load.timescale()
-    fig = run_gnss(args, ts) if args.mode == "gnss" else run_stations(args, ts)
+    if args.mode == "microseismic":
+        fig = run_microseismic(args)
+    else:
+        ts = load.timescale()
+        fig = run_gnss(args, ts) if args.mode == "gnss" else run_stations(args, ts)
     fig.write_html(args.out)
     print(f"Saved {Path(args.out).resolve()}")
     if not args.no_show:

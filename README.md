@@ -116,6 +116,37 @@ Each run prints the truth, the estimate, the error in meters, the residuals, and
 
 **Simplifications.** No light-time correction, no Sagnac effect (Earth rotation during signal flight), and no ionosphere or troposphere. The GPS constellation is synthetic: 24 satellites in 6 planes, 55° inclination, ~20,200 km altitude, built directly as SGP4 elements. It is not a real almanac, so fewer satellites are visible than with the real ~31.
 
+### Microseismic location (oil & gas parallel)
+
+During hydraulic fracturing, geophones on the surface or in monitoring wells record P-wave arrivals from tiny rock failures. Locating them maps where the fractures grow. The math is the GNSS fix again (Geiger's method, 1912):
+
+```
+t_i = t0 + ‖r_i − p‖ / v      →      v·t_i = ‖r_i − p‖ + v·t0
+```
+
+Multiplying by the rock velocity `v` turns arrival times into pseudoranges, and the unknown origin time `t0` plays the role of the receiver clock bias. The same Gauss-Newton solver and DOP code are reused, after a coarse grid search below ground supplies the starting point.
+
+```bash
+# Compare a surface grid, three monitoring wells, and surface + one well
+python triangulate.py microseismic
+
+# One well only: arrival times cannot tell the azimuth
+python triangulate.py microseismic --wells 1
+
+# A 2% velocity error (4.4 vs 4.5 km/s), no picking noise
+python triangulate.py microseismic --v-assumed-km-s 4.4 --sigma-ms 0
+```
+
+The output is a table with the horizontal, depth and origin-time errors, HDOP/VDOP and RMS residual for each layout, plus a 3D view of the geophones, rays and events. What it shows, with the defaults (event 2.5 km deep, σ = 1 ms):
+
+- **Surface arrays see depth poorly.** VDOP 5.35 against HDOP 1.27: about 37 m of depth error against 5 m horizontally. This is the seismic version of GNSS VDOP > HDOP, and the reason for downhole monitoring. Wells bring the depth error down to about 1 m.
+- **One vertical well cannot resolve azimuth.** Times are symmetric around the well, so the Jacobian is rank-deficient and the CLI reports degenerate geometry. In practice, P-wave polarization supplies the azimuth.
+- **Two wells leave a mirror solution** across the vertical plane through them, and the solver may return it (about 700 m off) even with perfect data. Three non-collinear wells, or any surface geophones, remove it. DOP does not warn about this: it only describes the geometry near the solution, while the mirror is a second, distant solution. The CLI flags such layouts instead.
+- **A wrong velocity model biases the location**, and more geophones do not fix it. With a 2% error, the surface array places the event 67 m too deep, with an RMS residual of only 0.04 ms: the bias hides in the depth/origin-time trade-off. The combined layout exposes it with a 2.2 ms residual.
+- **The mirror image above ground** fits a surface-only array equally well. Searching only below ground picks the real event.
+
+Simplifications: homogeneous velocity, P waves only, straight rays, and no static corrections or anisotropy.
+
 ## Accuracy notes
 
 - A TLE is only valid near its **epoch**. For low Earth orbit objects such as the ISS, SGP4 error typically grows by roughly 1-3 km per day away from the epoch.
@@ -139,8 +170,8 @@ The script always writes the HTML file (`--out`). Open it manually in any browse
 ```
 iss-globe/
 ├── iss_globe.py        # main script
-├── triangulate.py      # triangulation study CLI (gnss / stations)
-├── triangulation/      # core (frames, Gauss-Newton), gnss, stations, plot
+├── triangulate.py      # triangulation study CLI (gnss / stations / microseismic)
+├── triangulation/      # core (frames, Gauss-Newton, DOP), gnss, stations, microseismic, plot
 ├── requirements.txt
 ├── requirements-dev.txt  # adds pytest
 ├── tests/              # offline test suite
