@@ -42,3 +42,38 @@ def build_triangulation_figure(title: str, anchors, truth, estimates):
     style_globe(fig, t_lat, t_lon)
     fig.update_layout(title=title)
     return fig
+
+
+def build_microseismic_figure(title: str, arrays, truth_xyz, estimates):
+    """3D view in the local frame (km): geophone arrays, rays, true and estimated events.
+
+    arrays:    [(name, (N, 3) xyz)]
+    estimates: [(label, xyz, error_m)]
+    """
+    fig = go.Figure()
+    tx, ty, tz = truth_xyz
+    ray_x, ray_y, ray_z = [], [], []
+    for _, xyz in arrays:
+        for x, y, z in xyz:
+            ray_x += [tx, x, None]
+            ray_y += [ty, y, None]
+            ray_z += [tz, z, None]
+    fig.add_trace(go.Scatter3d(x=ray_x, y=ray_y, z=ray_z, mode="lines", name="Rays",
+                               line=dict(width=1, color="rgba(150,200,255,0.35)"), hoverinfo="skip"))
+    for (name, xyz), color in zip(arrays, ["#4af", "#fa4", "#4f8", "#f6c", "#ccc"]):
+        fig.add_trace(go.Scatter3d(
+            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode="markers", name=f"{name} ({len(xyz)})",
+            marker=dict(size=3, color=color, symbol="diamond"),
+        ))
+    fig.add_trace(go.Scatter3d(x=[tx], y=[ty], z=[tz], mode="markers", name="True event",
+                               marker=dict(size=7, color="red", symbol="circle-open")))
+    for (label, (x, y, z), err), color in zip(estimates, ["yellow", "lime", "magenta"]):
+        fig.add_trace(go.Scatter3d(x=[x], y=[y], z=[z], mode="markers",
+                                   name=f"Estimate ({label}): {err:.1f} m",
+                                   marker=dict(size=4, color=color, symbol="x")))
+    fig.update_layout(
+        title=title, template="plotly_dark", height=700, margin=dict(l=0, r=0, t=60, b=0),
+        scene=dict(xaxis_title="East (km)", yaxis_title="North (km)",
+                   zaxis_title="Elevation (km)", aspectmode="data"),
+    )
+    return fig

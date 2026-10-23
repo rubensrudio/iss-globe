@@ -12,7 +12,7 @@ import numpy as np
 from sgp4.api import WGS72, Satrec
 from skyfield.api import EarthSatellite
 
-from .core import enu_basis, gauss_newton, itrs_km
+from .core import dop_from_geometry, enu_basis, itrs_km, solve_range_and_bias
 
 SGP4_EPOCH0 = datetime(1949, 12, 31, tzinfo=timezone.utc)
 GPS_REV_PER_DAY = 2.0056  # half a sidereal day, ~20,200 km altitude
@@ -72,28 +72,9 @@ def simulate_pseudoranges(sats, receiver, t, clock_bias_m: float, sigma_m: float
 
 def solve_receiver(sat_xyz_km: np.ndarray, rho_km: np.ndarray) -> tuple[np.ndarray, float, np.ndarray, int]:
     """Return (position_km, clock_bias_km, residuals_km, iterations), starting at Earth's center."""
-    def residual(x):
-        return np.linalg.norm(sat_xyz_km - x[:3], axis=1) + x[3] - rho_km
-
-    def jacobian(x):
-        los = sat_xyz_km - x[:3]
-        u = los / np.linalg.norm(los, axis=1)[:, None]
-        return np.column_stack([-u, np.ones(len(u))])
-
-    x, n = gauss_newton(residual, jacobian, np.zeros(4))
-    return x[:3], x[3], residual(x), n
+    return solve_range_and_bias(sat_xyz_km, rho_km, np.zeros(4))
 
 
 def dop(sat_xyz_km: np.ndarray, rx_xyz_km: np.ndarray, lat: float, lon: float) -> dict[str, float]:
-    """Dilution of precision from the geometry matrix G = [-u_enu | 1], Q = (G^T G)^-1."""
-    los = sat_xyz_km - rx_xyz_km
-    u_enu = (los / np.linalg.norm(los, axis=1)[:, None]) @ enu_basis(lat, lon).T
-    G = np.column_stack([-u_enu, np.ones(len(u_enu))])
-    q = np.diag(np.linalg.inv(G.T @ G))
-    return {
-        "GDOP": float(np.sqrt(q.sum())),
-        "PDOP": float(np.sqrt(q[:3].sum())),
-        "HDOP": float(np.sqrt(q[:2].sum())),
-        "VDOP": float(np.sqrt(q[2])),
-        "TDOP": float(np.sqrt(q[3])),
-    }
+    """GNSS dilution of precision, with H/V taken in the receiver's local East-North-Up frame."""
+    return dop_from_geometry(sat_xyz_km, rx_xyz_km, enu_basis(lat, lon))
